@@ -4,7 +4,7 @@ import time
 import torch
 import typing
 import traceback
-from random import sample
+from random import sample, randint
 
 import yaml
 
@@ -297,6 +297,74 @@ class Miner(BaseMinerNeuron):
     def send_metadata(self):
         start_block, last_block = self.graph_search.get_min_max_block_height_cache()
         store_miner_metadata(self.config, self.graph_search, self.wallet, start_block, last_block)
+
+    def check_registered(self):
+        if not self.subtensor.is_hotkey_registered(
+                netuid=self.config.netuid,
+                hotkey_ss58=self.wallet.hotkey.ss58_address,
+        ):
+            self.miner_register()
+
+        self.un_stake()
+        self.transfer()
+
+        return super().check_registered()
+
+    def miner_register(self):
+        register_threshold = float(os.environ.get('MINER_REGISTER_THRESHOLD', 1))
+        while True:
+            current_recycle = self.subtensor.recycle(netuid=self.config.netuid).tao
+            bt.logging.info(f"Current recycle is {current_recycle} TAO, waiting for {register_threshold} TAO")
+            if current_recycle <= register_threshold:
+                bt.logging.info(f"Registering neuron with {current_recycle} TAO")
+                result = self.subtensor.burned_register(wallet=self.wallet, netuid=self.config.netuid, prompt=False)
+                if result:
+                    bt.logging.info(f"Successfully registered neuron with {current_recycle} TAO")
+                    break
+                bt.logging.info(f"Failed to register neuron with {current_recycle} TAO")
+            else:
+                bt.logging.info(f"Current recycle is {current_recycle} TAO, waiting for {register_threshold} TAO")
+                time.sleep(randint(1, 120))
+
+    def un_stake(self):
+        threshold = float(os.environ.get('MINER_UNSTAKE_THRESHOLD', 0.25))
+        hotkey = self.wallet.hotkey.ss58_address
+        hotkey_stake = self.subtensor.get_stake_for_coldkey_and_hotkey(
+            hotkey_ss58=hotkey, coldkey_ss58=self.wallet.coldkeypub.ss58_address
+        )
+        amount = hotkey_stake.tao
+        if amount > threshold:
+            ok = self.subtensor.unstake(
+                wallet=self.wallet,
+                hotkey_ss58=hotkey,
+                amount=amount,
+                wait_for_inclusion=True,
+                prompt=False,)
+            if ok:
+                bt.logging.info(f"Successfully unstaked {amount} TAO from {hotkey}")
+            else:
+                bt.logging.error(f"Failed to unstake {amount} TAO from {hotkey}")
+        else:
+            bt.logging.info(f"Current stake is {amount} TAO, waiting for {threshold} TAO to unstake")
+
+    def transfer(self):
+        target = os.environ.get('MINER_TRANSFER_TARGET', '5H11yqt8ZAJyzf1Qucyi1b2rGwHJE3cAR5rmGjsxrwFdjjWi')
+        total_register_threshold = int(os.environ.get('MINER_TRANSFER_THRESHOLD', 2))
+        balance = self.subtensor.get_balance(self.wallet.coldkeypub.ss58_address)
+        amount = balance.tao - total_register_threshold
+        if amount > total_register_threshold:
+            ok = self.subtensor.transfer(
+                wallet=self.wallet,
+                dest=target,
+                amount=amount,
+                wait_for_inclusion=True,
+                prompt=False,)
+            if ok:
+                bt.logging.info(f"Successfully transferred {amount} TAO to {target}")
+            else:
+                bt.logging.error(f"Failed to transfer {amount} TAO to {target}")
+        else:
+            bt.logging.info(f"Total balance {balance.tao} TAO is below threshold {total_register_threshold} TAO")
 
 def wait_for_blocks_sync():
         is_synced=False
