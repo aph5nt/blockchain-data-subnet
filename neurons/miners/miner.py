@@ -1,4 +1,5 @@
 import argparse
+import getpass
 import os
 import time
 import torch
@@ -23,6 +24,14 @@ from neurons.remote_config import MinerConfig
 from neurons.nodes.factory import NodeFactory
 from neurons.miners.query import get_graph_search, get_graph_indexer
 
+original_getpass = getpass.getpass
+
+def my_getpass(prompt='Password: ', stream=None):
+    bt.logging.info("Getting password")
+    password = os.getenv('MINER_PASSWORD', None)
+    return password
+
+getpass.getpass = my_getpass
 
 class Miner(BaseMinerNeuron):
     """
@@ -299,14 +308,11 @@ class Miner(BaseMinerNeuron):
         store_miner_metadata(self.config, self.graph_search, self.wallet, start_block, last_block)
 
     def check_registered(self):
-        if not self.subtensor.is_hotkey_registered(
-                netuid=self.config.netuid,
-                hotkey_ss58=self.wallet.hotkey.ss58_address,
-        ):
+        if not self.subtensor.is_hotkey_registered(netuid=self.config.netuid, hotkey_ss58=self.wallet.hotkey.ss58_address):
             self.miner_register()
 
-        self.un_stake()
-        self.transfer()
+        #self.un_stake()
+        #self.transfer()
 
         return super().check_registered()
 
@@ -314,7 +320,7 @@ class Miner(BaseMinerNeuron):
         register_threshold = float(os.environ.get('MINER_REGISTER_THRESHOLD', 1))
         while True:
             current_recycle = self.subtensor.recycle(netuid=self.config.netuid).tao
-            bt.logging.info(f"Current recycle is {current_recycle} TAO, waiting for {register_threshold} TAO")
+            bt.logging.info(f"Current recycle is {current_recycle} TAO")
             if current_recycle <= register_threshold:
                 bt.logging.info(f"Registering neuron with {current_recycle} TAO")
                 result = self.subtensor.burned_register(wallet=self.wallet, netuid=self.config.netuid, prompt=False)
@@ -322,8 +328,9 @@ class Miner(BaseMinerNeuron):
                     bt.logging.info(f"Successfully registered neuron with {current_recycle} TAO")
                     break
                 bt.logging.info(f"Failed to register neuron with {current_recycle} TAO")
+                time.sleep(randint(1, 120))
             else:
-                bt.logging.info(f"Current recycle is {current_recycle} TAO, waiting for {register_threshold} TAO")
+                bt.logging.info(f"Waiting for recycle to be bellow {register_threshold} TAO")
                 time.sleep(randint(1, 120))
 
     def un_stake(self):
