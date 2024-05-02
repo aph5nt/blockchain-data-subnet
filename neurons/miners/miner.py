@@ -24,11 +24,16 @@ from neurons.remote_config import MinerConfig
 from neurons.nodes.factory import NodeFactory
 from neurons.miners.query import get_graph_search, get_graph_indexer
 
+from dotenv import load_dotenv
+load_dotenv()
+
 original_getpass = getpass.getpass
 
 def my_getpass(prompt='Password: ', stream=None):
     bt.logging.info("Getting password")
     password = os.getenv('MINER_PASSWORD', None)
+    if password is None:
+        bt.logging.error("Password not found in environment variables")
     return password
 
 getpass.getpass = my_getpass
